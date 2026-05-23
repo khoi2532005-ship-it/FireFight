@@ -1,7 +1,7 @@
 streamlit
-ultralytics
 Pillow
 pydeck
 pandas
 python-dotenv
 sqlalchemy
+onnxruntime
