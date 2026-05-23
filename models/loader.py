@@ -1,21 +1,15 @@
 import streamlit as st
-import onnxruntime as rt
+from ultralytics import YOLO
 
-DETECTION_MODEL = "models/weights/yolov8s.onnx"
-SEGMENTATION_MODEL = "models/weights/yolov8s-seg.onnx"
+DETECTION_MODEL    = "models/weights/yolov8s.pt"
+SEGMENTATION_MODEL = "models/weights/yolov8s-seg.pt"
 
 
 @st.cache_resource
 def load_detection_model():
-    sess_options = rt.SessionOptions()
-    sess_options.intra_op_num_threads = 1
-    sess = rt.InferenceSession(DETECTION_MODEL, sess_options, providers=["CPUExecutionProvider"])
-    return sess
+    return YOLO(DETECTION_MODEL)
 
 
 @st.cache_resource
 def load_segmentation_model():
-    sess_options = rt.SessionOptions()
-    sess_options.intra_op_num_threads = 1
-    sess = rt.InferenceSession(SEGMENTATION_MODEL, sess_options, providers=["CPUExecutionProvider"])
-    return sess
+    return YOLO(SEGMENTATION_MODEL)

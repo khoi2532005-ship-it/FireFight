@@ -2,8 +2,6 @@ import cv2
 import numpy as np
 from PIL import Image as PilImage
 
-MODEL_INPUT_SIZE = 640
-
 COCO_CLASSES = {
     0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 4: "airplane",
     5: "bus", 6: "train", 7: "truck", 8: "boat", 9: "traffic light",
@@ -25,229 +23,68 @@ COCO_CLASSES = {
 }
 
 CONF_THRESH = 0.45
-IOU_THRESH  = 0.45
-NM = 32
 
 
-def letterbox(img, new_shape=(640, 640)):
-    shape = img.shape[:2]
-    r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
-    new_unpad = round(shape[1] * r), round(shape[0] * r)
-    dw = (new_shape[1] - new_unpad[0]) / 2
-    dh = (new_shape[0] - new_unpad[1]) / 2
-    if shape[::-1] != new_unpad:
-        img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
-    top, bottom = round(dh - 0.1), round(dh + 0.1)
-    left, right  = round(dw - 0.1), round(dw + 0.1)
-    img = cv2.copyMakeBorder(img, top, bottom, left, right,
-                             cv2.BORDER_CONSTANT, value=(114, 114, 114))
-    return img, (top, left), r
-
-
-def preprocess(img):
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img, pad, r = letterbox(img)
-    img = img.transpose(2, 0, 1)
-    img = np.ascontiguousarray(img).astype(np.float32) / 255.0
-    return img[np.newaxis], pad, r
-
-
-def numpy_nms(boxes_xyxy, scores, iou_thresh):
-    """Pure numpy NMS. boxes_xyxy: (N,4) [x1,y1,x2,y2]. Returns kept indices."""
-    if len(boxes_xyxy) == 0:
-        return []
-    x1, y1, x2, y2 = boxes_xyxy[:,0], boxes_xyxy[:,1], boxes_xyxy[:,2], boxes_xyxy[:,3]
-    areas = (x2 - x1).clip(0) * (y2 - y1).clip(0)
-    order = scores.argsort()[::-1]
-    kept  = []
-    while order.size > 0:
-        i = order[0]
-        kept.append(int(i))
-        if order.size == 1:
-            break
-        rest = order[1:]
-        xx1  = np.maximum(x1[i], x1[rest])
-        yy1  = np.maximum(y1[i], y1[rest])
-        xx2  = np.minimum(x2[i], x2[rest])
-        yy2  = np.minimum(y2[i], y2[rest])
-        inter = (xx2 - xx1).clip(0) * (yy2 - yy1).clip(0)
-        iou   = inter / (areas[i] + areas[rest] - inter + 1e-6)
-        order = rest[iou <= iou_thresh]
-    return kept
-
-
-def _nms(boxes_xywh, scores, class_ids, coeffs):
-    """Filter degenerate boxes then run per-class numpy NMS."""
-    if not boxes_xywh:
-        return [], []
-
-    boxes_arr  = np.array(boxes_xywh, dtype=np.float32)
-    scores_arr = np.array(scores,     dtype=np.float32)
-
-    xyxy = np.stack([
-        boxes_arr[:,0],
-        boxes_arr[:,1],
-        boxes_arr[:,0] + boxes_arr[:,2],
-        boxes_arr[:,1] + boxes_arr[:,3],
-    ], axis=1)
-
-    # Drop degenerate boxes
-    valid = (boxes_arr[:,2] > 2) & (boxes_arr[:,3] > 2)
-    if not valid.any():
-        return [], []
-
-    xyxy_v      = xyxy[valid]
-    scores_v    = scores_arr[valid]
-    class_ids_v = [class_ids[i]  for i, v in enumerate(valid) if v]
-    coeffs_v    = [coeffs[i]     for i, v in enumerate(valid) if v]
-    boxes_v     = [boxes_xywh[i] for i, v in enumerate(valid) if v]
-
-    # Per-class NMS
-    all_kept = set()
-    for cls in set(class_ids_v):
-        idx  = [i for i, c in enumerate(class_ids_v) if c == cls]
-        kept = numpy_nms(xyxy_v[idx], scores_v[idx], IOU_THRESH)
-        all_kept.update(idx[k] for k in kept)
-
-    detections, kept_coeffs = [], []
-    for i in sorted(all_kept, key=lambda i: -float(scores_v[i])):
-        detections.append({
-            "class_id":   class_ids_v[i],
-            "confidence": float(scores_v[i]),
-            "bbox":       boxes_v[i],
-        })
-        kept_coeffs.append(coeffs_v[i])
-    return detections, kept_coeffs
-
-
-def draw_detections(img, detections, class_names):
-    for det in detections:
-        x, y, w, h = det["bbox"]
-        name  = class_names.get(det["class_id"], f"class_{det['class_id']}")
-        color = (255, 69, 0)
-        cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
-        label = f"{name}: {det['confidence']:.2f}"
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-        ty = y - 10 if y - 10 > th else y + 10
-        cv2.rectangle(img, (x, ty - th), (x + tw, ty + th), color, cv2.FILLED)
-        cv2.putText(img, label, (x, ty), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5, (0, 0, 0), 1, cv2.LINE_AA)
-    return img
-
-
-def run_detection(sess, image, class_names=None):
+def run_detection(model, image, class_names=None):
     if class_names is None:
         class_names = COCO_CLASSES
 
-    img_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    img_input, pad, r = preprocess(img_bgr)
-    ih, iw = img_bgr.shape[:2]
-    gain   = min(640 / ih, 640 / iw)
+    results   = model(image, conf=CONF_THRESH, verbose=False)[0]
+    img_bgr   = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    result_img = img_bgr.copy()
 
-    input_name = sess.get_inputs()[0].name
-    raw   = sess.run(None, {input_name: img_input})
-    preds = np.squeeze(raw[0]).T   # (8400, 84)
+    detections = []
+    if results.boxes is not None:
+        for box in results.boxes:
+            cls  = int(box.cls[0])
+            conf = float(box.conf[0])
+            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
 
-    boxes, scores, class_ids = [], [], []
-    for row in preds:
-        probs = row[4:]
-        score = float(np.max(probs))
-        if score < CONF_THRESH:
-            continue
-        cls      = int(np.argmax(probs))
-        cx, cy, w, h = row[:4]
-        left = int((cx - w / 2 - pad[1]) / gain)
-        top  = int((cy - h / 2 - pad[0]) / gain)
-        boxes.append([left, top, int(w / gain), int(h / gain)])
-        scores.append(score)
-        class_ids.append(cls)
+            name  = class_names.get(cls, f"class_{cls}")
+            color = (255, 69, 0)
+            cv2.rectangle(result_img, (x1, y1), (x2, y2), color, 2)
+            label = f"{name}: {conf:.2f}"
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            ty = y1 - 10 if y1 - 10 > th else y1 + 10
+            cv2.rectangle(result_img, (x1, ty - th), (x1 + tw, ty + th), color, cv2.FILLED)
+            cv2.putText(result_img, label, (x1, ty),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
 
-    detections, _ = _nms(boxes, scores, class_ids, [None] * len(boxes))
+            detections.append({"class_id": cls, "confidence": conf,
+                                "bbox": [x1, y1, x2 - x1, y2 - y1]})
 
-    result = img_bgr.copy()
-    draw_detections(result, detections, class_names)
-    result_pil = PilImage.fromarray(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
-    return result_pil, [{"class_id": d["class_id"], "confidence": d["confidence"],
-                         "bbox": d["bbox"]} for d in detections]
+    result_pil = PilImage.fromarray(cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB))
+    return result_pil, detections
 
 
-def run_segmentation(sess, image, class_names=None):
+def run_segmentation(model, image, class_names=None):
     if class_names is None:
         class_names = COCO_CLASSES
 
-    img_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    img_input, pad, r = preprocess(img_bgr)
-    ih, iw = img_bgr.shape[:2]
-    gain   = min(640 / ih, 640 / iw)
+    results    = model(image, conf=CONF_THRESH, verbose=False)[0]
+    img_bgr    = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    result_img = img_bgr.copy()
+    ih, iw     = img_bgr.shape[:2]
 
-    input_name = sess.get_inputs()[0].name
-    out_names  = [o.name for o in sess.get_outputs()]
-    raw        = sess.run(out_names, {input_name: img_input})
-
-    preds  = raw[0]   # (1, 116, 8400)
-    protos = raw[1]   # (1, 32, 160, 160)
-    nm     = protos.shape[1]
-
-    # Letterbox padding mapped to proto space
-    scale_p       = protos.shape[2] / 640.0
-    proto_pad_top = int(pad[0] * scale_p)
-    proto_pad_lft = int(pad[1] * scale_p)
-    act_h = protos.shape[2] - 2 * proto_pad_top
-    act_w = protos.shape[3] - 2 * proto_pad_lft
-
-    boxes, scores, class_ids, coeffs = [], [], [], []
-    for i in range(preds.shape[2]):
-        row   = preds[0, :, i]
-        probs = row[4 + nm:]
-        score = float(np.max(probs))
-        if score < CONF_THRESH:
-            continue
-        cls      = int(np.argmax(probs))
-        cx, cy, w, h = row[:4]
-        left = int((cx - w / 2 - pad[1]) / gain)
-        top  = int((cy - h / 2 - pad[0]) / gain)
-        boxes.append([left, top, int(w / gain), int(h / gain)])
-        scores.append(score)
-        class_ids.append(cls)
-        coeffs.append(row[4:4 + nm].astype(np.float32))
-
-    detections, kept_coeffs = _nms(boxes, scores, class_ids, coeffs)
-
-    result = img_bgr.copy()
-
-    if detections:
-        protos_np  = protos[0].astype(np.float32)  # (nm, 160, 160)
-        proto_crop = protos_np[
-            :,
-            proto_pad_top: proto_pad_top + act_h,
-            proto_pad_lft: proto_pad_lft + act_w,
-        ]
-
-        coeff_arr = np.stack(kept_coeffs)           # (N, nm)
-        ph, pw    = proto_crop.shape[1], proto_crop.shape[2]
-
-        raw_masks = (coeff_arr @ proto_crop.reshape(nm, -1)).reshape(-1, ph, pw)
-        masks_sig = 1.0 / (1.0 + np.exp(-raw_masks))
-
-        masks_full = np.stack([
-            cv2.resize(masks_sig[k], (iw, ih), interpolation=cv2.INTER_LINEAR)
-            for k in range(masks_sig.shape[0])
-        ])
-
+    detections = []
+    if results.masks is not None and results.boxes is not None:
         green = np.array([0, 200, 0], dtype=np.float32)
 
-        for idx, det in enumerate(detections):
-            x, y, bw, bh = det["bbox"]
-            x1, y1 = max(0, x),        max(0, y)
-            x2, y2 = min(iw, x + bw),  min(ih, y + bh)
-            if x2 <= x1 or y2 <= y1:
-                continue
-            mask_roi = (masks_full[idx, y1:y2, x1:x2] > 0.5)[..., np.newaxis]
-            roi      = result[y1:y2, x1:x2].astype(np.float32)
-            result[y1:y2, x1:x2] = np.where(mask_roi,
-                                             roi * 0.55 + green * 0.45,
-                                             roi).astype(np.uint8)
+        for box, mask in zip(results.boxes, results.masks):
+            cls  = int(box.cls[0])
+            conf = float(box.conf[0])
+            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
 
-    result_pil = PilImage.fromarray(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
-    return result_pil, [{"class_id": d["class_id"], "confidence": d["confidence"],
-                         "bbox": d["bbox"]} for d in detections]
+            # Resize mask to original image size
+            mask_np      = mask.data[0].cpu().numpy()
+            mask_resized = cv2.resize(mask_np, (iw, ih), interpolation=cv2.INTER_LINEAR)
+            mask_bin     = (mask_resized > 0.5)[..., np.newaxis]
+
+            roi        = result_img.astype(np.float32)
+            result_img = np.where(mask_bin, roi * 0.55 + green * 0.45, roi).astype(np.uint8)
+
+            detections.append({"class_id": cls, "confidence": conf,
+                                "bbox": [x1, y1, x2 - x1, y2 - y1]})
+
+    result_pil = PilImage.fromarray(cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB))
+    return result_pil, detections

@@ -1,8 +1,8 @@
 streamlit
+ultralytics
 Pillow
 pydeck
 pandas
 python-dotenv
 sqlalchemy
-onnxruntime
 opencv-python-headless
