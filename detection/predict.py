@@ -25,8 +25,9 @@ COCO_CLASSES = {
 }
 
 # YOLOv8-seg ONNX output layout: [1, 116, 8400]
-#   4:4+nm  = mask coefficients (32)
-#   4+nm:   = class probabilities (80)
+#   :4        = bbox (x, y, w, h)
+#   4:4+NM    = mask coefficients (32)
+#   4+NM:     = class probabilities (80)
 NM = 32
 
 
@@ -145,17 +146,12 @@ def run_segmentation(sess, image, class_names=None):
     output_names = [o.name for o in sess.get_outputs()]
     outputs = sess.run(output_names, {input_name: img_input})
 
-    preds = outputs[0]  # [1, 116, 8400]
+    preds = outputs[0]   # [1, 116, 8400]
     protos = outputs[1]  # [1, 32, 160, 160]
 
     img_shape = img_bgr.shape[:2]
-    nm = protos.shape[0]  # 32
-
-    # preds layout: [1, 4+bbox, nm+4, nc+nm+4] -> [1, 4, 32, 80] per detection
-    # For each detection i:
-    #   preds[0, :4, i]       = bbox (x, y, w, h)
-    #   preds[0, 4:4+nm, i]   = mask coefficients
-    #   preds[0, 4+nm:, i]    = class probabilities (80)
+    # FIX: protos is [1, 32, 160, 160] — nm is shape[1], not shape[0]
+    nm = protos.shape[1]  # = 32
 
     boxes = []
     scores = []
@@ -186,19 +182,20 @@ def run_segmentation(sess, image, class_names=None):
 
     result_img = img_bgr.copy()
     if detections and mask_coeffs:
-        mask_coeffs = np.array(mask_coeffs)
-        protos_float = protos.astype(np.float32)[0]  # [32, 160, 160]
+        mask_coeffs_arr = np.array(mask_coeffs)          # (N, 32)
+        protos_float = protos.astype(np.float32)[0]      # (32, 160, 160)
 
-        # (N, 32) @ (32, 160*160) = (N, 160, 160)
-        masks_flat = (mask_coeffs @ protos_float.reshape(nm, -1)).reshape(-1, protos.shape[2], protos.shape[3])
+        # (N, 32) @ (32, 160*160) -> (N, 160, 160)
+        masks_flat = (mask_coeffs_arr @ protos_float.reshape(nm, -1)).reshape(-1, protos_float.shape[1], protos_float.shape[2])
         masks = 1.0 / (1.0 + np.exp(-masks_flat))  # sigmoid
 
-        # Scale masks to original image size
-        mh, mw = masks.shape[1], masks.shape[2]
         target_h, target_w = img_shape[0], img_shape[1]
-        masks = cv2.resize(masks, (target_w, target_h))
+        # FIX: cv2.resize cannot handle (N,H,W) — resize each mask individually
+        masks = np.stack([
+            cv2.resize(masks[i], (target_w, target_h))
+            for i in range(masks.shape[0])
+        ])
 
-        # Apply each mask to its corresponding detection
         for idx, det in enumerate(detections):
             x, y, bw, bh = det["bbox"]
             cls = det["class_id"]
@@ -212,7 +209,6 @@ def run_segmentation(sess, image, class_names=None):
             overlay = np.where(mask[..., np.newaxis] > 0, overlay, roi)
             result_img[y:y+bh, x:x+bw] = overlay.astype(np.uint8)
 
-            # Draw class name label on the mask
             name = class_names.get(cls, f"class_{cls}")
             label = f"{name}: {score:.2f}"
             color = (0, 200, 0)
