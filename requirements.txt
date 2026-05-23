@@ -5,3 +5,4 @@ pandas
 python-dotenv
 sqlalchemy
 onnxruntime
+opencv-python-headless
