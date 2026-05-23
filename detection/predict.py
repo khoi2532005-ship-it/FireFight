@@ -52,30 +52,72 @@ def preprocess(img):
     return img[np.newaxis], pad, r
 
 
-def _nms(boxes, scores, class_ids, mask_coeffs):
-    """Run per-class NMS and return aligned (detections, coeffs)."""
-    if not boxes:
+def numpy_nms(boxes_xyxy, scores, iou_thresh):
+    """Pure numpy NMS. boxes_xyxy: (N,4) [x1,y1,x2,y2]. Returns kept indices."""
+    if len(boxes_xyxy) == 0:
+        return []
+    x1, y1, x2, y2 = boxes_xyxy[:,0], boxes_xyxy[:,1], boxes_xyxy[:,2], boxes_xyxy[:,3]
+    areas = (x2 - x1).clip(0) * (y2 - y1).clip(0)
+    order = scores.argsort()[::-1]
+    kept  = []
+    while order.size > 0:
+        i = order[0]
+        kept.append(int(i))
+        if order.size == 1:
+            break
+        rest = order[1:]
+        xx1  = np.maximum(x1[i], x1[rest])
+        yy1  = np.maximum(y1[i], y1[rest])
+        xx2  = np.minimum(x2[i], x2[rest])
+        yy2  = np.minimum(y2[i], y2[rest])
+        inter = (xx2 - xx1).clip(0) * (yy2 - yy1).clip(0)
+        iou   = inter / (areas[i] + areas[rest] - inter + 1e-6)
+        order = rest[iou <= iou_thresh]
+    return kept
+
+
+def _nms(boxes_xywh, scores, class_ids, coeffs):
+    """Filter degenerate boxes then run per-class numpy NMS."""
+    if not boxes_xywh:
         return [], []
 
-    # cv2.dnn.NMSBoxes needs list-of-list boxes and list-of-float scores
-    boxes_cv  = [[int(x), int(y), int(w), int(h)] for x, y, w, h in boxes]
-    scores_cv = [float(s) for s in scores]
+    boxes_arr  = np.array(boxes_xywh, dtype=np.float32)
+    scores_arr = np.array(scores,     dtype=np.float32)
 
-    kept = cv2.dnn.NMSBoxes(boxes_cv, scores_cv, CONF_THRESH, IOU_THRESH)
-    if len(kept) == 0:
+    xyxy = np.stack([
+        boxes_arr[:,0],
+        boxes_arr[:,1],
+        boxes_arr[:,0] + boxes_arr[:,2],
+        boxes_arr[:,1] + boxes_arr[:,3],
+    ], axis=1)
+
+    # Drop degenerate boxes
+    valid = (boxes_arr[:,2] > 2) & (boxes_arr[:,3] > 2)
+    if not valid.any():
         return [], []
 
-    kept = kept.flatten() if isinstance(kept, np.ndarray) else list(kept)
+    xyxy_v      = xyxy[valid]
+    scores_v    = scores_arr[valid]
+    class_ids_v = [class_ids[i]  for i, v in enumerate(valid) if v]
+    coeffs_v    = [coeffs[i]     for i, v in enumerate(valid) if v]
+    boxes_v     = [boxes_xywh[i] for i, v in enumerate(valid) if v]
 
-    detections, coeffs = [], []
-    for i in kept:
+    # Per-class NMS
+    all_kept = set()
+    for cls in set(class_ids_v):
+        idx  = [i for i, c in enumerate(class_ids_v) if c == cls]
+        kept = numpy_nms(xyxy_v[idx], scores_v[idx], IOU_THRESH)
+        all_kept.update(idx[k] for k in kept)
+
+    detections, kept_coeffs = [], []
+    for i in sorted(all_kept, key=lambda i: -float(scores_v[i])):
         detections.append({
-            "class_id":   int(class_ids[i]),
-            "confidence": float(scores[i]),
-            "bbox":       boxes[i],
+            "class_id":   class_ids_v[i],
+            "confidence": float(scores_v[i]),
+            "bbox":       boxes_v[i],
         })
-        coeffs.append(mask_coeffs[i])
-    return detections, coeffs
+        kept_coeffs.append(coeffs_v[i])
+    return detections, kept_coeffs
 
 
 def draw_detections(img, detections, class_names):
@@ -100,16 +142,16 @@ def run_detection(sess, image, class_names=None):
     img_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
     img_input, pad, r = preprocess(img_bgr)
     ih, iw = img_bgr.shape[:2]
-    gain = min(640 / ih, 640 / iw)
+    gain   = min(640 / ih, 640 / iw)
 
     input_name = sess.get_inputs()[0].name
-    raw = sess.run(None, {input_name: img_input})
-    preds = np.transpose(np.squeeze(raw[0]))   # (8400, 84)
+    raw   = sess.run(None, {input_name: img_input})
+    preds = np.squeeze(raw[0]).T   # (8400, 84)
 
     boxes, scores, class_ids = [], [], []
     for row in preds:
-        probs    = row[4:]
-        score    = float(np.max(probs))
+        probs = row[4:]
+        score = float(np.max(probs))
         if score < CONF_THRESH:
             continue
         cls      = int(np.argmax(probs))
@@ -136,25 +178,22 @@ def run_segmentation(sess, image, class_names=None):
     img_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
     img_input, pad, r = preprocess(img_bgr)
     ih, iw = img_bgr.shape[:2]
-    gain = min(640 / ih, 640 / iw)
+    gain   = min(640 / ih, 640 / iw)
 
-    input_name  = sess.get_inputs()[0].name
-    out_names   = [o.name for o in sess.get_outputs()]
-    raw         = sess.run(out_names, {input_name: img_input})
+    input_name = sess.get_inputs()[0].name
+    out_names  = [o.name for o in sess.get_outputs()]
+    raw        = sess.run(out_names, {input_name: img_input})
 
-    preds  = raw[0]   # (1, 4+nm+80, 8400)
-    protos = raw[1]   # (1, nm, 160, 160)
-
-    nm      = protos.shape[1]        # 32
-    proto_h = protos.shape[2]        # 160
-    proto_w = protos.shape[3]        # 160
+    preds  = raw[0]   # (1, 116, 8400)
+    protos = raw[1]   # (1, 32, 160, 160)
+    nm     = protos.shape[1]
 
     # Letterbox padding mapped to proto space
-    scale_p       = proto_h / 640.0
+    scale_p       = protos.shape[2] / 640.0
     proto_pad_top = int(pad[0] * scale_p)
     proto_pad_lft = int(pad[1] * scale_p)
-    act_h = proto_h - 2 * proto_pad_top
-    act_w = proto_w - 2 * proto_pad_lft
+    act_h = protos.shape[2] - 2 * proto_pad_top
+    act_w = protos.shape[3] - 2 * proto_pad_lft
 
     boxes, scores, class_ids, coeffs = [], [], [], []
     for i in range(preds.shape[2]):
@@ -177,43 +216,37 @@ def run_segmentation(sess, image, class_names=None):
     result = img_bgr.copy()
 
     if detections:
-        protos_np = protos[0].astype(np.float32)  # (nm, 160, 160)
-
-        # Crop to active (non-padded) proto region
+        protos_np  = protos[0].astype(np.float32)  # (nm, 160, 160)
         proto_crop = protos_np[
             :,
             proto_pad_top: proto_pad_top + act_h,
             proto_pad_lft: proto_pad_lft + act_w,
-        ]  # (nm, act_h, act_w)
+        ]
 
-        coeff_arr = np.stack(kept_coeffs)          # (N, nm)
+        coeff_arr = np.stack(kept_coeffs)           # (N, nm)
         ph, pw    = proto_crop.shape[1], proto_crop.shape[2]
 
-        # Matrix multiply -> sigmoid -> (N, ph, pw)
-        raw_masks = coeff_arr @ proto_crop.reshape(nm, -1)   # (N, ph*pw)
-        raw_masks = raw_masks.reshape(-1, ph, pw)
-        masks_sig = 1.0 / (1.0 + np.exp(-raw_masks))        # sigmoid
+        raw_masks = (coeff_arr @ proto_crop.reshape(nm, -1)).reshape(-1, ph, pw)
+        masks_sig = 1.0 / (1.0 + np.exp(-raw_masks))
 
-        # Resize each mask to original image dimensions
         masks_full = np.stack([
             cv2.resize(masks_sig[k], (iw, ih), interpolation=cv2.INTER_LINEAR)
             for k in range(masks_sig.shape[0])
-        ])  # (N, ih, iw)
+        ])
 
         green = np.array([0, 200, 0], dtype=np.float32)
 
         for idx, det in enumerate(detections):
             x, y, bw, bh = det["bbox"]
-            x1, y1 = max(0, x),      max(0, y)
-            x2, y2 = min(iw, x + bw), min(ih, y + bh)
+            x1, y1 = max(0, x),        max(0, y)
+            x2, y2 = min(iw, x + bw),  min(ih, y + bh)
             if x2 <= x1 or y2 <= y1:
                 continue
-
-            # Crop mask to bbox, threshold at 0.5
             mask_roi = (masks_full[idx, y1:y2, x1:x2] > 0.5)[..., np.newaxis]
             roi      = result[y1:y2, x1:x2].astype(np.float32)
-            overlay  = roi * 0.55 + green * 0.45
-            result[y1:y2, x1:x2] = np.where(mask_roi, overlay, roi).astype(np.uint8)
+            result[y1:y2, x1:x2] = np.where(mask_roi,
+                                             roi * 0.55 + green * 0.45,
+                                             roi).astype(np.uint8)
 
     result_pil = PilImage.fromarray(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
     return result_pil, [{"class_id": d["class_id"], "confidence": d["confidence"],
