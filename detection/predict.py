@@ -1,11 +1,9 @@
 import cv2
 import numpy as np
 from PIL import Image as PilImage
-import streamlit as st
 
 MODEL_INPUT_SIZE = 640
 
-# COCO 80 classes
 COCO_CLASSES = {
     0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 4: "airplane",
     5: "bus", 6: "train", 7: "truck", 8: "boat", 9: "traffic light",
@@ -26,6 +24,8 @@ COCO_CLASSES = {
     79: "toothbrush",
 }
 
+CONF_THRESH = 0.45
+IOU_THRESH  = 0.45
 NM = 32
 
 
@@ -33,12 +33,14 @@ def letterbox(img, new_shape=(640, 640)):
     shape = img.shape[:2]
     r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
     new_unpad = round(shape[1] * r), round(shape[0] * r)
-    dw, dh = (new_shape[1] - new_unpad[0]) / 2, (new_shape[0] - new_unpad[1]) / 2
+    dw = (new_shape[1] - new_unpad[0]) / 2
+    dh = (new_shape[0] - new_unpad[1]) / 2
     if shape[::-1] != new_unpad:
         img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
     top, bottom = round(dh - 0.1), round(dh + 0.1)
-    left, right = round(dw - 0.1), round(dw + 0.1)
-    img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114))
+    left, right  = round(dw - 0.1), round(dw + 0.1)
+    img = cv2.copyMakeBorder(img, top, bottom, left, right,
+                             cv2.BORDER_CONSTANT, value=(114, 114, 114))
     return img, (top, left), r
 
 
@@ -47,41 +49,47 @@ def preprocess(img):
     img, pad, r = letterbox(img)
     img = img.transpose(2, 0, 1)
     img = np.ascontiguousarray(img).astype(np.float32) / 255.0
-    img = img[np.newaxis, ...]
-    return img, pad, r
+    return img[np.newaxis], pad, r
 
 
-def postprocess_nms(boxes, scores, class_ids, mask_coeffs, conf_thres=0.25, iou_thres=0.7):
+def _nms(boxes, scores, class_ids, mask_coeffs):
+    """Run per-class NMS and return aligned (detections, coeffs)."""
     if not boxes:
         return [], []
-    indices = cv2.dnn.NMSBoxes(boxes, scores, conf_thres, iou_thres)
-    detections, kept_coeffs = [], []
-    if len(indices) > 0:
-        if isinstance(indices, np.ndarray):
-            indices = indices.flatten()
-        for i in indices:
-            detections.append({
-                "class_id": class_ids[int(i)],
-                "confidence": float(scores[int(i)]),
-                "bbox": boxes[int(i)],
-            })
-            kept_coeffs.append(mask_coeffs[int(i)])
-    return detections, kept_coeffs
+
+    # cv2.dnn.NMSBoxes needs list-of-list boxes and list-of-float scores
+    boxes_cv  = [[int(x), int(y), int(w), int(h)] for x, y, w, h in boxes]
+    scores_cv = [float(s) for s in scores]
+
+    kept = cv2.dnn.NMSBoxes(boxes_cv, scores_cv, CONF_THRESH, IOU_THRESH)
+    if len(kept) == 0:
+        return [], []
+
+    kept = kept.flatten() if isinstance(kept, np.ndarray) else list(kept)
+
+    detections, coeffs = [], []
+    for i in kept:
+        detections.append({
+            "class_id":   int(class_ids[i]),
+            "confidence": float(scores[i]),
+            "bbox":       boxes[i],
+        })
+        coeffs.append(mask_coeffs[i])
+    return detections, coeffs
 
 
 def draw_detections(img, detections, class_names):
     for det in detections:
         x, y, w, h = det["bbox"]
-        score = det["confidence"]
-        cls = det["class_id"]
-        name = class_names.get(cls, f"class_{cls}")
+        name  = class_names.get(det["class_id"], f"class_{det['class_id']}")
         color = (255, 69, 0)
-        cv2.rectangle(img, (int(x), int(y)), (int(x + w), int(y + h)), color, 2)
-        label = f"{name}: {score:.2f}"
+        cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
+        label = f"{name}: {det['confidence']:.2f}"
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         ty = y - 10 if y - 10 > th else y + 10
-        cv2.rectangle(img, (int(x), int(ty - th)), (int(x + tw), int(ty + th)), color, cv2.FILLED)
-        cv2.putText(img, label, (int(x), int(ty)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+        cv2.rectangle(img, (x, ty - th), (x + tw, ty + th), color, cv2.FILLED)
+        cv2.putText(img, label, (x, ty), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (0, 0, 0), 1, cv2.LINE_AA)
     return img
 
 
@@ -91,34 +99,34 @@ def run_detection(sess, image, class_names=None):
 
     img_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
     img_input, pad, r = preprocess(img_bgr)
+    ih, iw = img_bgr.shape[:2]
+    gain = min(640 / ih, 640 / iw)
+
     input_name = sess.get_inputs()[0].name
-    output = sess.run(None, {input_name: img_input})
-    img_shape = img_bgr.shape[:2]
+    raw = sess.run(None, {input_name: img_input})
+    preds = np.transpose(np.squeeze(raw[0]))   # (8400, 84)
 
-    outputs = np.transpose(np.squeeze(output))
     boxes, scores, class_ids = [], [], []
+    for row in preds:
+        probs    = row[4:]
+        score    = float(np.max(probs))
+        if score < CONF_THRESH:
+            continue
+        cls      = int(np.argmax(probs))
+        cx, cy, w, h = row[:4]
+        left = int((cx - w / 2 - pad[1]) / gain)
+        top  = int((cy - h / 2 - pad[0]) / gain)
+        boxes.append([left, top, int(w / gain), int(h / gain)])
+        scores.append(score)
+        class_ids.append(cls)
 
-    gain = min(640 / img_shape[0], 640 / img_shape[1])
-    outputs[:, 0] -= pad[1]
-    outputs[:, 1] -= pad[0]
+    detections, _ = _nms(boxes, scores, class_ids, [None] * len(boxes))
 
-    for i in range(outputs.shape[0]):
-        classes_scores = outputs[i][4:]
-        max_score = np.amax(classes_scores)
-        if max_score >= 0.25:
-            class_id = int(np.argmax(classes_scores))
-            x, y, w, h = outputs[i][0], outputs[i][1], outputs[i][2], outputs[i][3]
-            class_ids.append(class_id)
-            scores.append(max_score)
-            boxes.append([int((x - w/2) / gain), int((y - h/2) / gain), int(w / gain), int(h / gain)])
-
-    detections, _ = postprocess_nms(boxes, scores, class_ids, [None]*len(boxes))
-
-    result_img = img_bgr.copy()
-    result_img = draw_detections(result_img, detections, class_names)
-    result_pil = PilImage.fromarray(cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB))
-
-    return result_pil, [{"class_id": d["class_id"], "confidence": d["confidence"], "bbox": d["bbox"]} for d in detections]
+    result = img_bgr.copy()
+    draw_detections(result, detections, class_names)
+    result_pil = PilImage.fromarray(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
+    return result_pil, [{"class_id": d["class_id"], "confidence": d["confidence"],
+                         "bbox": d["bbox"]} for d in detections]
 
 
 def run_segmentation(sess, image, class_names=None):
@@ -127,92 +135,86 @@ def run_segmentation(sess, image, class_names=None):
 
     img_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
     img_input, pad, r = preprocess(img_bgr)
+    ih, iw = img_bgr.shape[:2]
+    gain = min(640 / ih, 640 / iw)
 
-    input_name = sess.get_inputs()[0].name
-    output_names = [o.name for o in sess.get_outputs()]
-    outputs = sess.run(output_names, {input_name: img_input})
+    input_name  = sess.get_inputs()[0].name
+    out_names   = [o.name for o in sess.get_outputs()]
+    raw         = sess.run(out_names, {input_name: img_input})
 
-    preds  = outputs[0]  # [1, 116, 8400]
-    protos = outputs[1]  # [1, 32, 160, 160]
+    preds  = raw[0]   # (1, 4+nm+80, 8400)
+    protos = raw[1]   # (1, nm, 160, 160)
 
-    img_h, img_w = img_bgr.shape[:2]
-    nm = protos.shape[1]  # 32
-    proto_h, proto_w = protos.shape[2], protos.shape[3]  # 160, 160
+    nm      = protos.shape[1]        # 32
+    proto_h = protos.shape[2]        # 160
+    proto_w = protos.shape[3]        # 160
 
-    # Letterbox padding in proto space
-    pad_top, pad_left = pad  # pixels in 640-space
-    scale_proto = proto_h / 640.0  # 160/640 = 0.25
-    proto_pad_top  = int(pad_top  * scale_proto)
-    proto_pad_left = int(pad_left * scale_proto)
-    proto_active_h = proto_h - 2 * proto_pad_top
-    proto_active_w = proto_w - 2 * proto_pad_left
+    # Letterbox padding mapped to proto space
+    scale_p       = proto_h / 640.0
+    proto_pad_top = int(pad[0] * scale_p)
+    proto_pad_lft = int(pad[1] * scale_p)
+    act_h = proto_h - 2 * proto_pad_top
+    act_w = proto_w - 2 * proto_pad_lft
 
-    boxes, scores, class_ids, mask_coeffs = [], [], [], []
-    gain = min(640 / img_h, 640 / img_w)
-
+    boxes, scores, class_ids, coeffs = [], [], [], []
     for i in range(preds.shape[2]):
-        row = preds[0, :, i]
-        class_probs = row[4+nm:]
-        max_score = float(np.max(class_probs))
-        if max_score >= 0.25:
-            cls = int(np.argmax(class_probs))
-            x, y, w, h = row[0], row[1], row[2], row[3]
-            left = int((x - w/2 - pad_left) / gain)
-            top  = int((y - h/2 - pad_top)  / gain)
-            class_ids.append(cls)
-            scores.append(max_score)
-            boxes.append([left, top, int(w / gain), int(h / gain)])
-            mask_coeffs.append(row[4:4+nm])
+        row   = preds[0, :, i]
+        probs = row[4 + nm:]
+        score = float(np.max(probs))
+        if score < CONF_THRESH:
+            continue
+        cls      = int(np.argmax(probs))
+        cx, cy, w, h = row[:4]
+        left = int((cx - w / 2 - pad[1]) / gain)
+        top  = int((cy - h / 2 - pad[0]) / gain)
+        boxes.append([left, top, int(w / gain), int(h / gain)])
+        scores.append(score)
+        class_ids.append(cls)
+        coeffs.append(row[4:4 + nm].astype(np.float32))
 
-    detections, kept_coeffs = postprocess_nms(boxes, scores, class_ids, mask_coeffs)
+    detections, kept_coeffs = _nms(boxes, scores, class_ids, coeffs)
 
-    # --- DEBUG: show in Streamlit sidebar ---
-    st.sidebar.write(f"**[SEG DEBUG]** detections: {len(detections)}, proto shape: {protos.shape}")
-    st.sidebar.write(f"pad: {pad}, gain: {gain:.4f}, proto active: {proto_active_h}x{proto_active_w}")
+    result = img_bgr.copy()
 
-    result_img = img_bgr.copy()
+    if detections:
+        protos_np = protos[0].astype(np.float32)  # (nm, 160, 160)
 
-    if detections and kept_coeffs:
-        protos_float = protos.astype(np.float32)[0]  # (32, 160, 160)
-
-        # Crop protos to active (non-padded) region before computing masks
-        protos_cropped = protos_float[
+        # Crop to active (non-padded) proto region
+        proto_crop = protos_np[
             :,
-            proto_pad_top : proto_pad_top + proto_active_h,
-            proto_pad_left: proto_pad_left + proto_active_w
-        ]  # (32, active_h, active_w)
+            proto_pad_top: proto_pad_top + act_h,
+            proto_pad_lft: proto_pad_lft + act_w,
+        ]  # (nm, act_h, act_w)
 
-        coeffs_arr = np.array(kept_coeffs)  # (N, 32)
-        ph, pw = protos_cropped.shape[1], protos_cropped.shape[2]
+        coeff_arr = np.stack(kept_coeffs)          # (N, nm)
+        ph, pw    = proto_crop.shape[1], proto_crop.shape[2]
 
-        # (N,32) @ (32, ph*pw) -> (N, ph, pw)
-        masks_flat = (coeffs_arr @ protos_cropped.reshape(nm, -1)).reshape(-1, ph, pw)
-        masks = 1.0 / (1.0 + np.exp(-masks_flat))  # sigmoid -> 0..1
+        # Matrix multiply -> sigmoid -> (N, ph, pw)
+        raw_masks = coeff_arr @ proto_crop.reshape(nm, -1)   # (N, ph*pw)
+        raw_masks = raw_masks.reshape(-1, ph, pw)
+        masks_sig = 1.0 / (1.0 + np.exp(-raw_masks))        # sigmoid
 
-        st.sidebar.write(f"masks shape: {masks.shape}, min: {masks.min():.3f}, max: {masks.max():.3f}, mean: {masks.mean():.3f}")
-        st.sidebar.write(f"pixels > 0.5: {(masks > 0.5).sum()} / {masks.size}")
-
-        # Resize each mask from proto-active space to original image size
-        masks_resized = np.stack([
-            cv2.resize(masks[i], (img_w, img_h))
-            for i in range(masks.shape[0])
-        ])
+        # Resize each mask to original image dimensions
+        masks_full = np.stack([
+            cv2.resize(masks_sig[k], (iw, ih), interpolation=cv2.INTER_LINEAR)
+            for k in range(masks_sig.shape[0])
+        ])  # (N, ih, iw)
 
         green = np.array([0, 200, 0], dtype=np.float32)
 
         for idx, det in enumerate(detections):
             x, y, bw, bh = det["bbox"]
-            x1 = max(0, x);  x2 = min(img_w, x + bw)
-            y1 = max(0, y);  y2 = min(img_h, y + bh)
+            x1, y1 = max(0, x),      max(0, y)
+            x2, y2 = min(iw, x + bw), min(ih, y + bh)
             if x2 <= x1 or y2 <= y1:
                 continue
 
-            mask = (masks_resized[idx, y1:y2, x1:x2] > 0.5).astype(np.uint8)
-            st.sidebar.write(f"det {idx} bbox [{x1},{y1},{x2},{y2}] mask coverage: {mask.mean():.3f}")
+            # Crop mask to bbox, threshold at 0.5
+            mask_roi = (masks_full[idx, y1:y2, x1:x2] > 0.5)[..., np.newaxis]
+            roi      = result[y1:y2, x1:x2].astype(np.float32)
+            overlay  = roi * 0.55 + green * 0.45
+            result[y1:y2, x1:x2] = np.where(mask_roi, overlay, roi).astype(np.uint8)
 
-            roi = result_img[y1:y2, x1:x2].astype(np.float32)
-            overlay = roi * 0.55 + green * 0.45
-            result_img[y1:y2, x1:x2] = np.where(mask[..., np.newaxis] > 0, overlay, roi).astype(np.uint8)
-
-    result_pil = PilImage.fromarray(cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB))
-    return result_pil, [{"class_id": d["class_id"], "confidence": d["confidence"], "bbox": d["bbox"]} for d in detections]
+    result_pil = PilImage.fromarray(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
+    return result_pil, [{"class_id": d["class_id"], "confidence": d["confidence"],
+                         "bbox": d["bbox"]} for d in detections]
