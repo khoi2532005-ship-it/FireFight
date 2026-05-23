@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from PIL import Image as PilImage
 
 MODEL_INPUT_SIZE = 640
 
@@ -125,14 +126,16 @@ def run_detection(sess, image, class_names=None):
 
     result_img = img_bgr.copy()
     result_img = draw_detections(result_img, detections, class_names)
-    result_img = cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB)
+    # FIX: was returning image.copy() (original PIL) — now returns annotated result as PIL
+    result_img_rgb = cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB)
+    result_pil = PilImage.fromarray(result_img_rgb)
 
     detections_list = [
         {"class_id": d["class_id"], "confidence": d["confidence"], "bbox": d["bbox"]}
         for d in detections
     ]
 
-    return image.copy(), detections_list
+    return result_pil, detections_list
 
 
 def run_segmentation(sess, image, class_names=None):
@@ -218,11 +221,13 @@ def run_segmentation(sess, image, class_names=None):
             cv2.putText(result_img, label, (int(x), int(ty)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
 
     result_img = draw_detections(result_img, detections, class_names)
-    result_img = cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB)
+    # FIX: was returning image.copy() (original PIL) — now returns annotated result as PIL
+    result_img_rgb = cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB)
+    result_pil = PilImage.fromarray(result_img_rgb)
 
     detections_list = [
         {"class_id": d["class_id"], "confidence": d["confidence"], "bbox": d["bbox"]}
         for d in detections
     ]
 
-    return image.copy(), detections_list
+    return result_pil, detections_list
