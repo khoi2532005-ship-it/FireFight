@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from PIL import Image as PilImage
+import streamlit as st
 
 MODEL_INPUT_SIZE = 640
 
@@ -51,12 +52,10 @@ def preprocess(img):
 
 
 def postprocess_nms(boxes, scores, class_ids, mask_coeffs, conf_thres=0.25, iou_thres=0.7):
-    """NMS that also returns the kept mask_coeffs aligned to surviving detections."""
     if not boxes:
         return [], []
     indices = cv2.dnn.NMSBoxes(boxes, scores, conf_thres, iou_thres)
-    detections = []
-    kept_coeffs = []
+    detections, kept_coeffs = [], []
     if len(indices) > 0:
         if isinstance(indices, np.ndarray):
             indices = indices.flatten()
@@ -66,7 +65,7 @@ def postprocess_nms(boxes, scores, class_ids, mask_coeffs, conf_thres=0.25, iou_
                 "confidence": float(scores[int(i)]),
                 "bbox": boxes[int(i)],
             })
-            kept_coeffs.append(mask_coeffs[int(i)] if mask_coeffs else None)
+            kept_coeffs.append(mask_coeffs[int(i)])
     return detections, kept_coeffs
 
 
@@ -113,7 +112,7 @@ def run_detection(sess, image, class_names=None):
             scores.append(max_score)
             boxes.append([int((x - w/2) / gain), int((y - h/2) / gain), int(w / gain), int(h / gain)])
 
-    detections, _ = postprocess_nms(boxes, scores, class_ids, [])
+    detections, _ = postprocess_nms(boxes, scores, class_ids, [None]*len(boxes))
 
     result_img = img_bgr.copy()
     result_img = draw_detections(result_img, detections, class_names)
@@ -133,11 +132,20 @@ def run_segmentation(sess, image, class_names=None):
     output_names = [o.name for o in sess.get_outputs()]
     outputs = sess.run(output_names, {input_name: img_input})
 
-    preds = outputs[0]   # [1, 116, 8400]
+    preds  = outputs[0]  # [1, 116, 8400]
     protos = outputs[1]  # [1, 32, 160, 160]
 
     img_h, img_w = img_bgr.shape[:2]
     nm = protos.shape[1]  # 32
+    proto_h, proto_w = protos.shape[2], protos.shape[3]  # 160, 160
+
+    # Letterbox padding in proto space
+    pad_top, pad_left = pad  # pixels in 640-space
+    scale_proto = proto_h / 640.0  # 160/640 = 0.25
+    proto_pad_top  = int(pad_top  * scale_proto)
+    proto_pad_left = int(pad_left * scale_proto)
+    proto_active_h = proto_h - 2 * proto_pad_top
+    proto_active_w = proto_w - 2 * proto_pad_left
 
     boxes, scores, class_ids, mask_coeffs = [], [], [], []
     gain = min(640 / img_h, 640 / img_w)
@@ -149,27 +157,42 @@ def run_segmentation(sess, image, class_names=None):
         if max_score >= 0.25:
             cls = int(np.argmax(class_probs))
             x, y, w, h = row[0], row[1], row[2], row[3]
-            left = int((x - w/2 - pad[1]) / gain)
-            top  = int((y - h/2 - pad[0]) / gain)
+            left = int((x - w/2 - pad_left) / gain)
+            top  = int((y - h/2 - pad_top)  / gain)
             class_ids.append(cls)
             scores.append(max_score)
             boxes.append([left, top, int(w / gain), int(h / gain)])
             mask_coeffs.append(row[4:4+nm])
 
-    # NMS — kept_coeffs is aligned to surviving detections
     detections, kept_coeffs = postprocess_nms(boxes, scores, class_ids, mask_coeffs)
+
+    # --- DEBUG: show in Streamlit sidebar ---
+    st.sidebar.write(f"**[SEG DEBUG]** detections: {len(detections)}, proto shape: {protos.shape}")
+    st.sidebar.write(f"pad: {pad}, gain: {gain:.4f}, proto active: {proto_active_h}x{proto_active_w}")
 
     result_img = img_bgr.copy()
 
     if detections and kept_coeffs:
         protos_float = protos.astype(np.float32)[0]  # (32, 160, 160)
-        coeffs_arr = np.array(kept_coeffs)           # (N, 32)
 
-        # (N,32) @ (32, 160*160) -> sigmoid -> (N, 160, 160)
-        masks_flat = (coeffs_arr @ protos_float.reshape(nm, -1)).reshape(-1, protos_float.shape[1], protos_float.shape[2])
-        masks = 1.0 / (1.0 + np.exp(-masks_flat))
+        # Crop protos to active (non-padded) region before computing masks
+        protos_cropped = protos_float[
+            :,
+            proto_pad_top : proto_pad_top + proto_active_h,
+            proto_pad_left: proto_pad_left + proto_active_w
+        ]  # (32, active_h, active_w)
 
-        # Resize each mask to original image size individually
+        coeffs_arr = np.array(kept_coeffs)  # (N, 32)
+        ph, pw = protos_cropped.shape[1], protos_cropped.shape[2]
+
+        # (N,32) @ (32, ph*pw) -> (N, ph, pw)
+        masks_flat = (coeffs_arr @ protos_cropped.reshape(nm, -1)).reshape(-1, ph, pw)
+        masks = 1.0 / (1.0 + np.exp(-masks_flat))  # sigmoid -> 0..1
+
+        st.sidebar.write(f"masks shape: {masks.shape}, min: {masks.min():.3f}, max: {masks.max():.3f}, mean: {masks.mean():.3f}")
+        st.sidebar.write(f"pixels > 0.5: {(masks > 0.5).sum()} / {masks.size}")
+
+        # Resize each mask from proto-active space to original image size
         masks_resized = np.stack([
             cv2.resize(masks[i], (img_w, img_h))
             for i in range(masks.shape[0])
@@ -179,15 +202,14 @@ def run_segmentation(sess, image, class_names=None):
 
         for idx, det in enumerate(detections):
             x, y, bw, bh = det["bbox"]
-            # Clip bbox to image bounds to prevent out-of-bounds indexing
-            x1 = max(0, x)
-            y1 = max(0, y)
-            x2 = min(img_w, x + bw)
-            y2 = min(img_h, y + bh)
+            x1 = max(0, x);  x2 = min(img_w, x + bw)
+            y1 = max(0, y);  y2 = min(img_h, y + bh)
             if x2 <= x1 or y2 <= y1:
-                continue  # skip zero-area boxes
+                continue
 
             mask = (masks_resized[idx, y1:y2, x1:x2] > 0.5).astype(np.uint8)
+            st.sidebar.write(f"det {idx} bbox [{x1},{y1},{x2},{y2}] mask coverage: {mask.mean():.3f}")
+
             roi = result_img[y1:y2, x1:x2].astype(np.float32)
             overlay = roi * 0.55 + green * 0.45
             result_img[y1:y2, x1:x2] = np.where(mask[..., np.newaxis] > 0, overlay, roi).astype(np.uint8)
