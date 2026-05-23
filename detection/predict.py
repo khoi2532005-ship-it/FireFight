@@ -126,7 +126,6 @@ def run_detection(sess, image, class_names=None):
 
     result_img = img_bgr.copy()
     result_img = draw_detections(result_img, detections, class_names)
-    # FIX: was returning image.copy() (original PIL) — now returns annotated result as PIL
     result_img_rgb = cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB)
     result_pil = PilImage.fromarray(result_img_rgb)
 
@@ -153,7 +152,6 @@ def run_segmentation(sess, image, class_names=None):
     protos = outputs[1]  # [1, 32, 160, 160]
 
     img_shape = img_bgr.shape[:2]
-    # FIX: protos is [1, 32, 160, 160] — nm is shape[1], not shape[0]
     nm = protos.shape[1]  # = 32
 
     boxes = []
@@ -193,16 +191,14 @@ def run_segmentation(sess, image, class_names=None):
         masks = 1.0 / (1.0 + np.exp(-masks_flat))  # sigmoid
 
         target_h, target_w = img_shape[0], img_shape[1]
-        # FIX: cv2.resize cannot handle (N,H,W) — resize each mask individually
         masks = np.stack([
             cv2.resize(masks[i], (target_w, target_h))
             for i in range(masks.shape[0])
         ])
 
+        # Apply mask overlay only — no labels or bounding boxes on seg image
         for idx, det in enumerate(detections):
             x, y, bw, bh = det["bbox"]
-            cls = det["class_id"]
-            score = det["confidence"]
             mask = masks[idx, y:y+bh, x:x+bw]
             mask = (mask > 0.5).astype(np.uint8)
 
@@ -212,16 +208,6 @@ def run_segmentation(sess, image, class_names=None):
             overlay = np.where(mask[..., np.newaxis] > 0, overlay, roi)
             result_img[y:y+bh, x:x+bw] = overlay.astype(np.uint8)
 
-            name = class_names.get(cls, f"class_{cls}")
-            label = f"{name}: {score:.2f}"
-            color = (0, 200, 0)
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-            ty = y - 12 if y - 12 > th else y + 12
-            cv2.rectangle(result_img, (int(x), int(ty - th)), (int(x + tw), int(ty + th)), color, cv2.FILLED)
-            cv2.putText(result_img, label, (int(x), int(ty)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
-
-    result_img = draw_detections(result_img, detections, class_names)
-    # FIX: was returning image.copy() (original PIL) — now returns annotated result as PIL
     result_img_rgb = cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB)
     result_pil = PilImage.fromarray(result_img_rgb)
 
