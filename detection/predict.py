@@ -16,7 +16,7 @@ CLASS_COLORS = {
     1: (180, 180, 180),  # smoke – grey
 }
 
-CONF_THRESH = 0.45
+CONF_THRESH = 0.25
 
 
 def run_detection(model, image, class_names=None):
