@@ -26,7 +26,7 @@ SEGMENTATION_OVERLAY_COLORS = {
     1: np.array([160, 160, 160], dtype=np.float32),   # smoke – grey
 }
 
-CONF_THRESH = 0.25
+CONF_THRESH = 0.15
 
 
 def run_detection(model, image, class_names=None):
