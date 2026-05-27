@@ -2,16 +2,13 @@ import cv2
 import numpy as np
 from PIL import Image as PilImage
 
-# Detection model (yolov8s.pt) — 5 classes
+# Detection model (YOLOv8m from HuggingFace kittendev/YOLOv8m-smoke-detection) — 2 classes
 DETECTION_CLASSES = {
-    0: "fire-smoke",
-    1: "fog",
-    2: "sol",
-    3: "fire",
-    4: "factory-smoke",
+    0: "fire",
+    1: "smoke",
 }
 
-# Segmentation model (yolov8s-seg.pt) — 2 classes
+# Segmentation model (yolov8s-seg.pt) — 2 classes (unchanged)
 SEGMENTATION_CLASSES = {
     0: "fire",
     1: "smoke",
@@ -19,11 +16,8 @@ SEGMENTATION_CLASSES = {
 
 # Per-class colours for detection (BGR)
 DETECTION_COLORS = {
-    0: (0,   100, 255),   # fire-smoke    – orange
-    1: (180, 180, 180),   # fog           – light grey
-    2: (0,   255, 255),   # sol           – yellow
-    3: (0,    69, 255),   # fire          – red-orange
-    4: (100, 100, 100),   # factory-smoke – dark grey
+    0: (0,  69, 255),    # fire  – red-orange
+    1: (180, 180, 180),  # smoke – light grey
 }
 
 # Per-class colours for segmentation overlay (RGB float)
@@ -99,7 +93,6 @@ def run_segmentation(model, image, class_names=None):
             roi        = result_img.astype(np.float32)
             result_img = np.where(mask_bin, roi * 0.55 + overlay * 0.45, roi).astype(np.uint8)
 
-            # Draw label
             color = (int(overlay[2]), int(overlay[1]), int(overlay[0]))  # RGB → BGR
             label = f"{name}: {conf:.2f}"
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
