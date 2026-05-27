@@ -6,7 +6,10 @@ from PIL import Image
 from utils.exif import get_image_metadata
 from data.db import save_detection
 from models.loader import load_detection_model, load_segmentation_model
-from detection.predict import run_detection, run_segmentation, FIRE_SMOKE_CLASSES
+from detection.predict import (
+    run_detection, run_segmentation,
+    DETECTION_CLASSES, SEGMENTATION_CLASSES,
+)
 
 st.title("Detection")
 
@@ -14,11 +17,9 @@ uploaded_files = st.file_uploader(
     "Choose images", type=["png", "jpg", "jpeg"], accept_multiple_files=True
 )
 
-# Cache results in session_state keyed by filename to avoid reprocessing on rerun
 if "results_cache" not in st.session_state:
     st.session_state.results_cache = {}
 
-# Clear cache when file list changes
 current_names = {f.name for f in uploaded_files} if uploaded_files else set()
 cached_names  = set(st.session_state.results_cache.keys())
 if current_names != cached_names:
@@ -40,10 +41,10 @@ if uploaded_files:
             st.write("No EXIF metadata found.")
 
         if uploaded_file.name not in st.session_state.results_cache:
-            # Stage 1 — detection
+            # Stage 1 — detection (5-class model)
             with st.spinner(f"Running detection on {uploaded_file.name}..."):
                 det_img, detections = run_detection(
-                    load_detection_model(), image, FIRE_SMOKE_CLASSES
+                    load_detection_model(), image, DETECTION_CLASSES
                 )
 
             if not detections:
@@ -60,10 +61,10 @@ if uploaded_files:
                     mode="Detection",
                 )
             else:
-                # Stage 2 — segmentation (lazy, only if detections found)
+                # Stage 2 — segmentation (2-class model)
                 with st.spinner(f"Running segmentation on {uploaded_file.name}..."):
                     seg_img, seg_detections = run_segmentation(
-                        load_segmentation_model(), image, FIRE_SMOKE_CLASSES
+                        load_segmentation_model(), image, SEGMENTATION_CLASSES
                     )
 
                 st.session_state.results_cache[uploaded_file.name] = {
@@ -79,7 +80,6 @@ if uploaded_files:
                     mode="Detection + Segmentation",
                 )
 
-        # Display cached results
         cached     = st.session_state.results_cache.get(uploaded_file.name, {})
         detections = cached.get("detections", [])
 
@@ -89,7 +89,7 @@ if uploaded_files:
         else:
             st.subheader(f"Detections ({len(detections)})")
             for i, d in enumerate(detections):
-                cls_name = FIRE_SMOKE_CLASSES.get(d["class_id"], f"class_{d['class_id']}")
+                cls_name = DETECTION_CLASSES.get(d["class_id"], f"class_{d['class_id']}")
                 x, y, w, h = d["bbox"]
                 st.write(
                     f"  **{i+1}.** {cls_name} "
