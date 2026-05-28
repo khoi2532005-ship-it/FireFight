@@ -5,7 +5,10 @@ import json
 import streamlit as st
 import pandas as pd
 from data.db import load_all_detections
-from detection.predict import COCO_CLASSES
+from detection.predict import DETECTION_CLASSES, SEGMENTATION_CLASSES
+
+# Merge both class maps; detection takes priority on collision
+ALL_CLASSES = {**SEGMENTATION_CLASSES, **DETECTION_CLASSES}
 
 st.title("📋 Detection History")
 
@@ -22,8 +25,10 @@ def parse_classes(results_json):
         dets = json.loads(results_json) if isinstance(results_json, str) else results_json
         if not dets:
             return "No detections"
-        names = [COCO_CLASSES.get(d.get("class_id", -1), f"class_{d.get('class_id')}") for d in dets]
-        # Count occurrences e.g. "person x2, dog x1"
+        names = [
+            d.get("class_name") or ALL_CLASSES.get(d.get("class_id", -1), f"class_{d.get('class_id')}")
+            for d in dets
+        ]
         from collections import Counter
         counts = Counter(names)
         return ", ".join(f"{n} x{c}" if c > 1 else n for n, c in counts.items())
