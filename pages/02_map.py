@@ -16,8 +16,7 @@ locations = [{"lat": r["lat"], "lon": r["lon"]} for r in rows if r.get("lat") an
 
 if not locations:
     st.info("No geotag to read location")
-    ]
-    st.info("No geotagged detections yet — showing example locations.")
+
 
 st.subheader("Original Fire Location Map")
 st.pydeck_chart(build_location_map(locations), use_container_width=True)
