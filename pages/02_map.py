@@ -8,16 +8,14 @@ from utils.warning import build_warning_message
 
 RISK_RADII_METERS = {0: 0, 1: 5000, 2: 10000, 3: 15000, 4: 20000, 5: 25000}
 
-st.title("🗺️ Risk Map")
+st.title("Risk Map")
 
 
 rows = load_all_detections()
 locations = [{"lat": r["lat"], "lon": r["lon"]} for r in rows if r.get("lat") and r.get("lon")]
 
 if not locations:
-    locations = [
-        {"lat": -33.8688, "lon": 151.2093},
-        {"lat": -33.8750, "lon": 151.2050},
+    st.info("No geotag to read location")
     ]
     st.info("No geotagged detections yet — showing example locations.")
 
