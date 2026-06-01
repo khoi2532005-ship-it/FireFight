@@ -13,7 +13,7 @@ def build_location_map(locations):
     center_lon = sum(l["lon"] for l in locations) / len(locations)
     return pdk.Deck(
         map_provider="carto", map_style="road",
-        initial_view_state=pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=11, pitch=0),
+        initial_view_state=pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=14, pitch=0),
         layers=[pdk.Layer("ScatterplotLayer", data=locations, get_position="[lon, lat]",
                 get_fill_color=[255, 69, 0, 220], get_radius=250, radius_min_pixels=6, pickable=True)],
         tooltip={"text": "Fire location\nLat: {lat}\nLon: {lon}"},
@@ -52,7 +52,7 @@ def build_risk_map(locations, global_risk_level):
         
     return pdk.Deck(
         map_provider="carto", map_style="road",
-        initial_view_state=pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=11, pitch=0),
+        initial_view_state=pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=14, pitch=0),
         layers=layers,
         tooltip={"text": "Fire location\nLat: {lat}\nLon: {lon}\nRisk: {risk_level}"},
     )

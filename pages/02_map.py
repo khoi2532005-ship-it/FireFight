@@ -25,22 +25,22 @@ st.sidebar.title("🔥 Fire Fight")
 st.title("🗺️ Risk Map")
 
 rows = load_all_detections()
-locations = [{"lat": r["lat"], "lon": r["lon"], "risk_level": r.get("risk_level", 0)} for r in rows if r.get("lat") and r.get("lon")]
+auto_risk = max([int(r.get("risk_level") or 0) for r in rows]) if rows else 0
+
+locations = [{"lat": r["lat"], "lon": r["lon"], "risk_level": int(r.get("risk_level") or 0)} for r in rows if r.get("lat") and r.get("lon")]
 
 if not locations:
     locations = [
-        {"lat": -33.8688, "lon": 151.2093},
-        {"lat": -33.8750, "lon": 151.2050},
+        {"lat": -33.8688, "lon": 151.2093, "risk_level": auto_risk},
+        {"lat": -33.8750, "lon": 151.2050, "risk_level": auto_risk},
     ]
-    st.info("No geotagged detections yet — showing example locations.")
+    st.info("No geotagged detections yet — showing example locations with the highest current risk.")
 
 st.subheader("Original Fire Location Map")
 st.pydeck_chart(build_location_map(locations), use_container_width=True)
 
 st.subheader("Fire Risk Radius")
 st.write("The map below automatically displays the affected radius for each fire based on its segmentation coverage risk assessment.")
-
-auto_risk = max([l.get("risk_level", 0) for l in locations]) if locations else 0
 
 st.caption(
     f"Highest detected warning risk level: {auto_risk} "
