@@ -5,10 +5,8 @@ import streamlit as st
 import requests
 from requests.auth import HTTPBasicAuth
 from data.db import load_all_detections, update_risk_level
-from utils.map import build_risk_map, build_location_map
+from utils.map import build_risk_map, build_location_map, RISK_RADII_METERS
 from utils.warning import build_warning_message
-
-RISK_RADII_METERS = {0: 0, 1: 5000, 2: 10000, 3: 15000, 4: 20000, 5: 25000}
 
 TWILIO_SID = "ACb225681d24d8e1ea5c8ff4511fc52545"
 TWILIO_TOKEN = "3cfaa3ab82b85f9404dcbe2c6c7a7b11"
@@ -27,7 +25,7 @@ st.sidebar.title("🔥 Fire Fight")
 st.title("🗺️ Risk Map")
 
 rows = load_all_detections()
-locations = [{"lat": r["lat"], "lon": r["lon"]} for r in rows if r.get("lat") and r.get("lon")]
+locations = [{"lat": r["lat"], "lon": r["lon"], "risk_level": r.get("risk_level", 0)} for r in rows if r.get("lat") and r.get("lon")]
 
 if not locations:
     locations = [
@@ -52,8 +50,8 @@ for risk_level, column in enumerate(risk_columns):
 
 selected_risk = st.session_state.risk_level
 st.caption(
-    f"Selected risk level: {selected_risk} "
-    f"({RISK_RADII_METERS[selected_risk] / 1000:.1f} km radius)"
+    f"Selected warning risk level: {selected_risk} "
+    f"({RISK_RADII_METERS.get(selected_risk, 0)} m radius)"
 )
 
 st.pydeck_chart(build_risk_map(locations, selected_risk), use_container_width=True)

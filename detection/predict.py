@@ -77,6 +77,8 @@ def run_segmentation(model, image, class_names=None):
 
     DEFAULT_OVERLAY = np.array([0, 200, 0], dtype=np.float32)
 
+    total_mask = np.zeros((ih, iw), dtype=bool)
+
     detections = []
     if results.masks is not None and results.boxes is not None:
         for box, mask in zip(results.boxes, results.masks):
@@ -87,11 +89,14 @@ def run_segmentation(model, image, class_names=None):
 
             mask_np      = mask.data[0].cpu().numpy()
             mask_resized = cv2.resize(mask_np, (iw, ih), interpolation=cv2.INTER_LINEAR)
-            mask_bin     = (mask_resized > 0.5)[..., np.newaxis]
+            mask_bin     = (mask_resized > 0.5)
+            
+            total_mask   = np.logical_or(total_mask, mask_bin)
+            mask_bin_expanded = mask_bin[..., np.newaxis]
 
             overlay    = SEGMENTATION_OVERLAY_COLORS.get(cls, DEFAULT_OVERLAY)
             roi        = result_img.astype(np.float32)
-            result_img = np.where(mask_bin, roi * 0.55 + overlay * 0.45, roi).astype(np.uint8)
+            result_img = np.where(mask_bin_expanded, roi * 0.55 + overlay * 0.45, roi).astype(np.uint8)
 
             color = (int(overlay[2]), int(overlay[1]), int(overlay[0]))  # RGB → BGR
             label = f"{name}: {conf:.2f}"
@@ -108,5 +113,9 @@ def run_segmentation(model, image, class_names=None):
                 "bbox":       [x1, y1, x2 - x1, y2 - y1],
             })
 
+    coverage = 0.0
+    if ih > 0 and iw > 0:
+        coverage = (np.sum(total_mask) / (ih * iw)) * 100.0
+
     result_pil = PilImage.fromarray(cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB))
-    return result_pil, detections
+    return result_pil, detections, coverage

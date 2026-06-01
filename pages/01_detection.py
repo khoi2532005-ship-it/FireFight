@@ -66,19 +66,31 @@ if uploaded_files:
                     metadata=metadata,
                     confidence=0.0,
                     mode="Detection",
+                    risk_level=0
                 )
 
             else:
                 with st.spinner(f"Running segmentation on {uploaded_file.name}..."):
                     seg_model = load_segmentation_model()
-                    seg_img, seg_detections = run_segmentation(
+                    seg_img, seg_detections, coverage = run_segmentation(
                         seg_model, image, SEGMENTATION_CLASSES
                     )
+                
+                if coverage >= 80:
+                    risk_level = 3
+                elif coverage >= 50:
+                    risk_level = 2
+                elif coverage >= 20:
+                    risk_level = 1
+                else:
+                    risk_level = 0
 
                 st.session_state.results_cache[uploaded_file.name] = {
                     "detections": detections,
                     "det_img": det_img,
                     "seg_img": seg_img,
+                    "coverage": coverage,
+                    "risk_level": risk_level
                 }
 
                 save_detection(
@@ -87,6 +99,7 @@ if uploaded_files:
                     metadata=metadata,
                     confidence=max((d["confidence"] for d in detections), default=0.0),
                     mode="Detection + Segmentation",
+                    risk_level=risk_level
                 )
 
         cached = st.session_state.results_cache.get(uploaded_file.name, {})
@@ -98,6 +111,10 @@ if uploaded_files:
 
         else:
             st.subheader(f"Detections ({len(detections)})")
+            
+            if "coverage" in cached:
+                st.write(f"**Segmentation Coverage:** {cached['coverage']:.2f}%")
+                st.write(f"**Assessed Risk Level:** {cached.get('risk_level', 0)}")
 
             for i, d in enumerate(detections):
                 cls_name = DETECTION_CLASSES.get(d["class_id"], f"class_{d['class_id']}")
