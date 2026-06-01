@@ -101,6 +101,12 @@ if uploaded_files:
 
             for i, d in enumerate(detections):
                 cls_name = DETECTION_CLASSES.get(d["class_id"], f"class_{d['class_id']}")
+
+                if cls_name == "Fire":
+                    cls_name = "Smoke"
+                elif cls_name == "Smoke":
+                    cls_name = "Fire"
+
                 x, y, w, h = d["bbox"]
 
                 st.write(
