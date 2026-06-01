@@ -2,14 +2,29 @@ import sys, os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import streamlit as st
+import requests
+from requests.auth import HTTPBasicAuth
 from data.db import load_all_detections, update_risk_level
 from utils.map import build_risk_map, build_location_map
 from utils.warning import build_warning_message
 
 RISK_RADII_METERS = {0: 0, 1: 5000, 2: 10000, 3: 15000, 4: 20000, 5: 25000}
 
-st.title("🗺️ Risk Map")
+TWILIO_SID = "ACb225681d24d8e1ea5c8ff4511fc52545"
+TWILIO_TOKEN = "3cfaa3ab82b85f9404dcbe2c6c7a7b11"
+TWILIO_FROM = "whatsapp:+14155238886"
+TWILIO_TO = "whatsapp:+61433955368"
 
+def send_whatsapp(message):
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json"
+    requests.post(
+        url,
+        data={"From": TWILIO_FROM, "To": TWILIO_TO, "Body": message},
+        auth=HTTPBasicAuth(TWILIO_SID, TWILIO_TOKEN),
+    )
+
+st.sidebar.title("🔥 Fire Fight")
+st.title("🗺️ Risk Map")
 
 rows = load_all_detections()
 locations = [{"lat": r["lat"], "lon": r["lon"]} for r in rows if r.get("lat") and r.get("lon")]
@@ -49,7 +64,11 @@ warning_text = st.text_area("Warning summary", value=warning_message, height=180
 
 send_disabled = selected_risk == 0
 if st.button("Send Warning", use_container_width=True, disabled=send_disabled):
-    st.success("Warning sent successfully.")
+    try:
+        send_whatsapp(warning_text)
+        st.success("✅ Warning sent via WhatsApp successfully.")
+    except Exception as e:
+        st.error(f"Failed to send WhatsApp message: {e}")
     st.write(warning_text)
 
 if send_disabled:
