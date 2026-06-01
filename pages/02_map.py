@@ -38,29 +38,23 @@ st.subheader("Original Fire Location Map")
 st.pydeck_chart(build_location_map(locations), use_container_width=True)
 
 st.subheader("Fire Risk Radius")
-st.write("Choose a risk level from 0 to 5 to display the fire radius on the second map.")
+st.write("The map below automatically displays the affected radius for each fire based on its segmentation coverage risk assessment.")
 
-if "risk_level" not in st.session_state:
-    st.session_state.risk_level = 0
+auto_risk = max([l.get("risk_level", 0) for l in locations]) if locations else 0
 
-risk_columns = st.columns(6)
-for risk_level, column in enumerate(risk_columns):
-    if column.button(str(risk_level), use_container_width=True):
-        st.session_state.risk_level = risk_level
-
-selected_risk = st.session_state.risk_level
 st.caption(
-    f"Selected warning risk level: {selected_risk} "
-    f"({RISK_RADII_METERS.get(selected_risk, 0)} m radius)"
+    f"Highest detected warning risk level: {auto_risk} "
+    f"({RISK_RADII_METERS.get(auto_risk, 0)} m max radius)"
 )
 
-st.pydeck_chart(build_risk_map(locations, selected_risk), use_container_width=True)
+st.pydeck_chart(build_risk_map(locations, auto_risk), use_container_width=True)
 
 st.subheader("Warning Message")
-warning_message = build_warning_message(selected_risk)
+warning_message = build_warning_message(auto_risk)
+
 warning_text = st.text_area("Warning summary", value=warning_message, height=180)
 
-send_disabled = selected_risk == 0
+send_disabled = auto_risk == 0
 if st.button("Send Warning", use_container_width=True, disabled=send_disabled):
     try:
         send_whatsapp(warning_text)
