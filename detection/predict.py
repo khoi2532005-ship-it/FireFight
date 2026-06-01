@@ -16,8 +16,8 @@ SEGMENTATION_CLASSES = {
 
 # Per-class colours for detection (BGR)
 DETECTION_COLORS = {
-    0: (0,  69, 255),    # fire  – red-orange
-    1: (180, 180, 180),  # smoke – light grey
+    1: (0,  69, 255),    # fire  – red-orange
+    0: (180, 180, 180),  # smoke – light grey
 }
 
 # Per-class colours for segmentation overlay (RGB float)
