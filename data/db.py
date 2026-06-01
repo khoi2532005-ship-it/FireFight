@@ -25,13 +25,13 @@ def init_db():
             )
         """)
 
-def save_detection(filename, detections, metadata, confidence=0.0, mode="Detection"):
+def save_detection(filename, detections, metadata, confidence=0.0, mode="Detection", risk_level=0):
     init_db()
     with _conn() as con:
         con.execute(
-            "INSERT INTO detections (filename, lat, lon, results, confidence, mode, ts) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO detections (filename, lat, lon, results, confidence, mode, ts, risk_level) VALUES (?,?,?,?,?,?,?,?)",
             (filename, metadata.get("Latitude"), metadata.get("Longitude"),
-             json.dumps(detections), confidence, mode, datetime.utcnow().isoformat())
+             json.dumps(detections), confidence, mode, datetime.utcnow().isoformat(), risk_level)
         )
 
 def update_risk_level(detection_id, risk_level):

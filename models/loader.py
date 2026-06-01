@@ -5,7 +5,7 @@ from ultralytics import YOLO
 # Fire / smoke model weights
 # Replace these paths if you rename your .pt files.
 # ──────────────────────────────────────────────────────────────
-DETECTION_MODEL    = "models/weights/yolo8s-det.pt"
+DETECTION_MODEL    = "models/weights/yolov8s-det.pt"
 SEGMENTATION_MODEL = "models/weights/yolov8s-seg.pt"
 
 
