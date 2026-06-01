@@ -38,7 +38,6 @@ locations = [{"lat": r["lat"], "lon": r["lon"], "risk_level": int(r.get("risk_le
 if not locations:
     locations = [
         {"lat": -33.8688, "lon": 151.2093, "risk_level": auto_risk},
-        {"lat": -33.8750, "lon": 151.2050, "risk_level": auto_risk},
     ]
     st.info("No geotagged detections yet — showing example locations with the highest current risk.")
 
