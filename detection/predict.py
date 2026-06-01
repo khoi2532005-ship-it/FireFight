@@ -4,8 +4,8 @@ from PIL import Image as PilImage
 
 # Detection model (YOLOv8m from HuggingFace kittendev/YOLOv8m-smoke-detection) — 2 classes
 DETECTION_CLASSES = {
-    0: "fire",
-    1: "smoke",
+    0: "smoke",
+    1: "fire",
 }
 
 # Segmentation model (yolov8s-seg.pt) — 2 classes (unchanged)
