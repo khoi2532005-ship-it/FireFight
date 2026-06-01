@@ -52,7 +52,19 @@ if uploaded_files:
             for key, value in metadata.items():
                 st.write(f"**{key}:** {value}")
         else:
+            metadata = {}
             st.write("No EXIF metadata found.")
+
+        if uploaded_file.name not in st.session_state.results_cache:
+            if "Latitude" not in metadata or "Longitude" not in metadata:
+                st.warning("No GPS coordinates found in image. Please enter them manually for mapping.")
+                col1, col2 = st.columns(2)
+                # Defaults to Sydney
+                metadata["Latitude"] = col1.number_input("Latitude", value=-33.8688, format="%.6f", key=f"lat_{uploaded_file.name}")
+                metadata["Longitude"] = col2.number_input("Longitude", value=151.2093, format="%.6f", key=f"lon_{uploaded_file.name}")
+                
+                if not st.button(f"Analyze {uploaded_file.name}", key=f"btn_{uploaded_file.name}"):
+                    continue
 
         if uploaded_file.name not in st.session_state.results_cache:
 
