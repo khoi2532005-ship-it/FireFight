@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import streamlit as st
 import requests
 from requests.auth import HTTPBasicAuth
-from data.db import load_all_detections, update_risk_level
+from data.db import load_all_detections, update_risk_level, clear_db
 from utils.map import build_risk_map, build_location_map, RISK_RADII_METERS
 from utils.warning import build_warning_message
 
@@ -22,6 +22,12 @@ def send_whatsapp(message):
     )
 
 st.sidebar.title("🔥 Fire Fight")
+
+if st.sidebar.button("🗑️ Clear Database & Map", use_container_width=True):
+    clear_db()
+    if "results_cache" in st.session_state:
+        st.session_state.results_cache.clear()
+    st.rerun()
 st.title("🗺️ Risk Map")
 
 rows = load_all_detections()

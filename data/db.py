@@ -44,3 +44,8 @@ def load_all_detections():
     with _conn() as con:
         rows = con.execute("SELECT * FROM detections ORDER BY ts DESC").fetchall()
     return [dict(r) for r in rows]
+
+def clear_db():
+    init_db()
+    with _conn() as con:
+        con.execute("DELETE FROM detections")

@@ -4,12 +4,20 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import streamlit as st
 from PIL import Image
 from utils.exif import get_image_metadata
-from data.db import save_detection
+from data.db import save_detection, clear_db
 from models.loader import load_detection_model, load_segmentation_model
 from detection.predict import (
     run_detection, run_segmentation,
     DETECTION_CLASSES, SEGMENTATION_CLASSES,
 )
+
+st.sidebar.title("🔥 Fire Fight")
+
+if st.sidebar.button("🗑️ Clear Database & Map", use_container_width=True):
+    clear_db()
+    if "results_cache" in st.session_state:
+        st.session_state.results_cache.clear()
+    st.rerun()
 
 st.title("Detection")
 

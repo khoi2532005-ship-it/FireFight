@@ -4,11 +4,19 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import json
 import streamlit as st
 import pandas as pd
-from data.db import load_all_detections
+from data.db import load_all_detections, clear_db
 from detection.predict import DETECTION_CLASSES, SEGMENTATION_CLASSES
 
 # Merge both class maps; detection takes priority on collision
 ALL_CLASSES = {**SEGMENTATION_CLASSES, **DETECTION_CLASSES}
+
+st.sidebar.title("🔥 Fire Fight")
+
+if st.sidebar.button("🗑️ Clear Database & Map", use_container_width=True):
+    clear_db()
+    if "results_cache" in st.session_state:
+        st.session_state.results_cache.clear()
+    st.rerun()
 
 st.title("📋 Detection History")
 
