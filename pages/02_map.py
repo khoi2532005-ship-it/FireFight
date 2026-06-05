@@ -8,10 +8,10 @@ from data.db import load_all_detections, update_risk_level, clear_db
 from utils.map import build_risk_map, build_location_map, RISK_RADII_METERS
 from utils.warning import build_warning_message
 
-TWILIO_SID = "ACb225681d24d8e1ea5c8ff4511fc52545"
-TWILIO_TOKEN = "3cfaa3ab82b85f9404dcbe2c6c7a7b11"
-TWILIO_FROM = "whatsapp:+14155238886"
-TWILIO_TO = "whatsapp:+61433955368"
+TWILIO_SID = st.secrets["TWILIO_SID"]
+TWILIO_TOKEN = st.secrets["TWILIO_TOKEN"]
+TWILIO_FROM = st.secrets["TWILIO_FROM"]
+TWILIO_TO = st.secrets["TWILIO_TO"]
 
 def send_whatsapp(message):
     url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json"
