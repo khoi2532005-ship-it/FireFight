@@ -118,29 +118,7 @@ if uploaded_files:
                 st.session_state.results_cache[uploaded_file.name]["saved_to_db"] = True
 
         else:
-            # We have detections. Check if we have location.
-            if "Latitude" not in metadata or "Longitude" not in metadata:
-                st.warning("⚠️ Fire detected! But no GPS coordinates found in the image. Please enter them manually to map this detection.")
-                col1, col2 = st.columns(2)
-                metadata["Latitude"] = col1.number_input("Latitude", value=-33.8688, format="%.6f", key=f"lat_{uploaded_file.name}")
-                metadata["Longitude"] = col2.number_input("Longitude", value=151.2093, format="%.6f", key=f"lon_{uploaded_file.name}")
-                
-                if not st.button(f"Save Location & View Details", key=f"btn_{uploaded_file.name}"):
-                    continue
-
-            # At this point, we have GPS (either from EXIF or manual input) and they clicked the button (if manual).
-            if not cached.get("saved_to_db"):
-                save_detection(
-                    filename=uploaded_file.name,
-                    detections=detections,
-                    metadata=metadata,
-                    confidence=max((d["confidence"] for d in detections), default=0.0),
-                    mode="Detection + Segmentation",
-                    risk_level=cached.get("risk_level", 0)
-                )
-                st.session_state.results_cache[uploaded_file.name]["saved_to_db"] = True
-
-            # Display Detections
+            # 1. Display Detections FIRST
             st.subheader(f"Detections ({len(detections)})")
             
             if "coverage" in cached:
@@ -174,5 +152,28 @@ if uploaded_files:
                 caption=f"Segmentation Output — {SEGMENTATION_MODEL_NAME}",
                 use_container_width=True
             )
+
+            # 2. Check if we have location.
+            if "Latitude" not in metadata or "Longitude" not in metadata:
+                st.warning("⚠️ Fire detected! But no GPS coordinates found in the image. Please enter them manually below to map this detection.")
+                col1, col2 = st.columns(2)
+                metadata["Latitude"] = col1.number_input("Latitude", value=-33.8688, format="%.6f", key=f"lat_{uploaded_file.name}")
+                metadata["Longitude"] = col2.number_input("Longitude", value=151.2093, format="%.6f", key=f"lon_{uploaded_file.name}")
+                
+                if not st.button(f"Save Location to Map", key=f"btn_{uploaded_file.name}"):
+                    continue
+
+            # 3. Save to DB (We have GPS either from EXIF or manual input and they clicked the button)
+            if not cached.get("saved_to_db"):
+                save_detection(
+                    filename=uploaded_file.name,
+                    detections=detections,
+                    metadata=metadata,
+                    confidence=max((d["confidence"] for d in detections), default=0.0),
+                    mode="Detection + Segmentation",
+                    risk_level=cached.get("risk_level", 0)
+                )
+                st.session_state.results_cache[uploaded_file.name]["saved_to_db"] = True
+                st.success("✅ Detection logged and location mapped successfully.")
 
     st.success(f"Processed {len(uploaded_files)} image(s).")
