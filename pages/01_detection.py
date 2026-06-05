@@ -55,20 +55,8 @@ if uploaded_files:
             metadata = {}
             st.write("No EXIF metadata found.")
 
+        # Stage 1: Detection and Segmentation (Cached)
         if uploaded_file.name not in st.session_state.results_cache:
-            if "Latitude" not in metadata or "Longitude" not in metadata:
-                st.warning("No GPS coordinates found in image. Please enter them manually for mapping.")
-                col1, col2 = st.columns(2)
-                # Defaults to Sydney
-                metadata["Latitude"] = col1.number_input("Latitude", value=-33.8688, format="%.6f", key=f"lat_{uploaded_file.name}")
-                metadata["Longitude"] = col2.number_input("Longitude", value=151.2093, format="%.6f", key=f"lon_{uploaded_file.name}")
-                
-                if not st.button(f"Analyze {uploaded_file.name}", key=f"btn_{uploaded_file.name}"):
-                    continue
-
-        if uploaded_file.name not in st.session_state.results_cache:
-
-            # Stage 1 — detection
             with st.spinner(f"Running detection on {uploaded_file.name}..."):
                 det_model = load_detection_model()
                 det_img, detections = run_detection(det_model, image, DETECTION_CLASSES)
@@ -78,17 +66,8 @@ if uploaded_files:
                     "detections": [],
                     "det_img": None,
                     "seg_img": None,
+                    "saved_to_db": False
                 }
-
-                save_detection(
-                    filename=uploaded_file.name,
-                    detections=[],
-                    metadata=metadata,
-                    confidence=0.0,
-                    mode="Detection",
-                    risk_level=0
-                )
-
             else:
                 with st.spinner(f"Running segmentation on {uploaded_file.name}..."):
                     seg_model = load_segmentation_model()
@@ -114,26 +93,54 @@ if uploaded_files:
                     "det_img": det_img,
                     "seg_img": seg_img,
                     "coverage": coverage,
-                    "risk_level": risk_level
+                    "risk_level": risk_level,
+                    "saved_to_db": False
                 }
 
+        cached = st.session_state.results_cache.get(uploaded_file.name, {})
+        detections = cached.get("detections", [])
+
+        # Display results and handle Database saving
+        if not detections:
+            st.info("No fire or smoke detected in this image.")
+            st.image(image, caption="No detections", use_container_width=True)
+            
+            # Optionally save safe locations if we ALREADY have GPS. Don't prompt for it if missing.
+            if not cached.get("saved_to_db") and "Latitude" in metadata and "Longitude" in metadata:
+                save_detection(
+                    filename=uploaded_file.name,
+                    detections=[],
+                    metadata=metadata,
+                    confidence=0.0,
+                    mode="Detection",
+                    risk_level=0
+                )
+                st.session_state.results_cache[uploaded_file.name]["saved_to_db"] = True
+
+        else:
+            # We have detections. Check if we have location.
+            if "Latitude" not in metadata or "Longitude" not in metadata:
+                st.warning("⚠️ Fire detected! But no GPS coordinates found in the image. Please enter them manually to map this detection.")
+                col1, col2 = st.columns(2)
+                metadata["Latitude"] = col1.number_input("Latitude", value=-33.8688, format="%.6f", key=f"lat_{uploaded_file.name}")
+                metadata["Longitude"] = col2.number_input("Longitude", value=151.2093, format="%.6f", key=f"lon_{uploaded_file.name}")
+                
+                if not st.button(f"Save Location & View Details", key=f"btn_{uploaded_file.name}"):
+                    continue
+
+            # At this point, we have GPS (either from EXIF or manual input) and they clicked the button (if manual).
+            if not cached.get("saved_to_db"):
                 save_detection(
                     filename=uploaded_file.name,
                     detections=detections,
                     metadata=metadata,
                     confidence=max((d["confidence"] for d in detections), default=0.0),
                     mode="Detection + Segmentation",
-                    risk_level=risk_level
+                    risk_level=cached.get("risk_level", 0)
                 )
+                st.session_state.results_cache[uploaded_file.name]["saved_to_db"] = True
 
-        cached = st.session_state.results_cache.get(uploaded_file.name, {})
-        detections = cached.get("detections", [])
-
-        if not detections:
-            st.info("No fire or smoke detected in this image.")
-            st.image(image, caption="No detections", use_container_width=True)
-
-        else:
+            # Display Detections
             st.subheader(f"Detections ({len(detections)})")
             
             if "coverage" in cached:
@@ -156,7 +163,6 @@ if uploaded_files:
                     f"— Box: [{x:.0f}, {y:.0f}, {w:.0f}, {h:.0f}]"
                 )
 
-            # SHOW MODEL OUTPUTS WITH MODEL NAMES
             st.image(
                 cached["det_img"],
                 caption=f"Detection Output — {DETECTION_MODEL_NAME}",
