@@ -1,4 +1,4 @@
-RISK_RADII_METERS = {0: 0, 1: 500, 2: 2500, 3: 4500, 4: 8000, 5: 11000}
+RISK_RADII_METERS = {0: 0, 1: 5000, 2: 10000, 3: 15000, 4: 20000, 5: 25000}
 RISK_DESCRIPTIONS = {
     0: "No current risk", 1: "Low risk", 2: "Moderate risk",
     3: "High risk", 4: "Very high risk", 5: "Extreme risk",

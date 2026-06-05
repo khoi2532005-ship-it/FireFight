@@ -96,11 +96,15 @@ if uploaded_files:
                         seg_model, image, SEGMENTATION_CLASSES
                     )
                 
-                if coverage >= 80:
-                    risk_level = 3
+                if coverage >= 90:
+                    risk_level = 5
+                elif coverage >= 70:
+                    risk_level = 4
                 elif coverage >= 50:
+                    risk_level = 3
+                elif coverage >= 25:
                     risk_level = 2
-                elif coverage >= 20:
+                elif coverage >= 10:
                     risk_level = 1
                 else:
                     risk_level = 0

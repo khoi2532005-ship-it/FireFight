@@ -59,7 +59,7 @@ if rows:
         st.write("If the automated segmentation risk is incorrect, you can manually override it below.")
         options = {r["id"]: f"ID {r['id']} - {r['filename']} (Current Risk: {r.get('risk_level', 0)})" for r in rows}
         selected_id = st.selectbox("Select Detection to Edit", options=list(options.keys()), format_func=lambda x: options[x])
-        new_risk = st.selectbox("New Risk Level", options=[0, 1, 2, 3], index=0)
+        new_risk = st.selectbox("New Risk Level", options=[0, 1, 2, 3, 4, 5], index=0)
         
         if st.button("Update Risk Level"):
             update_risk_level(selected_id, new_risk)
